@@ -1,0 +1,77 @@
+#!/usr/bin/python3
+#
+# This helper script reports memory metrics. The typical response from the
+# device looks like this :
+#
+#  System Memory: xKB total, xKB used, xKB free, xKB available, x% used rate
+#  Swap: xKB total,xKB free
+#  Used detail:   xKB active, xKB inactive, xKB mapped, xKB slab, xKB others
+
+import sys
+import json
+
+# Send off command, expect a one-line response
+
+req = { "command" : "show memory | inc KB" }
+print(json.dumps(req))
+sys.stdout.flush()
+try:
+  reply = json.loads(sys.stdin.readline())
+except:
+  e = sys.exc_info()
+  print("FATAL! Could not parse JSON - %s" % e[1], file=sys.stderr)
+  sys.exit(1)
+
+if "response" in reply:
+  metrics = {}                                  # add what we discover here
+  line = reply["response"].split("\n")
+  if (len(line) == 3):
+
+    # pull apart the first line to get total, used, free and available.
+
+    if (line[0].startswith("System Memory:")):
+      tokens = line[0].lstrip("System Memory:").split(",")
+      for t in range(0, len(tokens)):
+        tokens[t] = tokens[t].lstrip(" ")
+        k = tokens[t].split(" ")                # eg, k = ['245716KB', 'total']
+        if k[0].endswith("KB"):
+          name = "node_memory_%s_bytes" % k[1].title()
+          metrics[name] = int(k[0].rstrip("KB")) * 1024
+
+    # pull apart the 2nd line to get swap total and swap free.
+
+    if (line[1].startswith("Swap:")):
+      tokens = line[1].lstrip("Swap:").split(",")
+      for t in range(0, len(tokens)):
+        tokens[t] = tokens[t].lstrip(" ")
+        k = tokens[t].split(" ")
+        if k[0].endswith("KB"):
+          name = "node_memory_Swap%s_bytes" % k[1].title()
+          metrics[name] = int(k[0].rstrip("KB")) * 1024
+
+    # pull apart the 3rd line to get active, inactive, mapped, slab and others.
+
+    if (line[2].startswith("Used detail:")):
+      tokens = line[2].lstrip("Used detail:").split(",")
+      for t in range(0, len(tokens)):
+        tokens[t] = tokens[t].lstrip(" ") 
+        k = tokens[t].split(" ")
+        if k[0].endswith("KB"):
+          name = "node_memory_%s_bytes" % k[1].title()
+          metrics[name] = int(k[0].rstrip("KB")) * 1024
+
+  else:
+    print("FATAL! Expecting 3x lines, got %d." % len(lines))
+    sys.exit(1)
+
+  # if we managed to collect metrics, report them now.
+
+  if (len(metrics) > 0):
+    report = {}
+    report["metrics"] = metrics
+    print("%s" % json.dumps(report))
+
+else:
+  print("FATAL! No 'response' in reply.", file=sys.stderr)
+  sys.exit(1)
+

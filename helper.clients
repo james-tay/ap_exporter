@@ -1,0 +1,139 @@
+#!/usr/bin/python3
+#
+# This helper script reports metrics on wifi clients. This is done in 2x
+# stages. First, we obtain a list of all wifi clients associated :
+#
+#   show dot11 associations all-client
+#
+# This gives us a list of client mac addresses and several metrics, but we're
+# only interested in the first couple columns. Some columns further down may
+# not contain values, making our parsing complicated.
+#
+#   RADIO-ID WLAN-ID ADDR              AID  CHAN RATE_DOWN RATE_UP RSSI ...
+#   1        3       00:f4:8d:38:a2:b4 2    1     144.5M    130.0M 37
+#   2        3       44:61:32:c2:83:0d 1    149   200.0M    200.0M 49
+#   2        3       38:f9:d3:98:63:32 6    149   243.0M    180.0M 24
+#
+# In the second stage, we obtain detailed metrics on each client. For each
+# client, we query using:
+#
+#   show dot11 associations 38f9.d398.6332 2/0
+#
+# Note how we reformat the client's mac address, and query against a specific
+# radio. This in turn gives us more metrics, for example:
+#
+#   The details of client 38f9.d398.6332.
+#       RSSI.................... 24
+#       SNR..................... -77
+#       AID..................... 6
+#       RX Data................. 4253002
+#       ...
+#
+# Metrics for a single client are stored in a "client_metrics" hash. All
+# clients encountered are stored in a hash "all_clients" where the key is
+# the mac address of the client. Recall that prometheus metric names cannot
+# have dashes, so we have to replace any '-' characters with '_'.
+
+import re
+import sys
+import json
+
+# Columns of interest in output of "show dot11 associations all-client".
+cfg_columns_to_parse = 7
+
+# The column where wifi client mac addresses are found (first column is 0).
+cfg_addr_column = 2
+
+# Each metric will be prefixed with this string.
+cfg_metric_prefix = "wifi_client"
+
+# -----------------------------------------------------------------------------
+
+# Start by getting a list of all associated wifi clients.
+
+req = { "command" : "show dot11 associations all-client" }
+print(json.dumps(req))
+sys.stdout.flush()
+try:
+  reply = json.loads(sys.stdin.readline())
+except:
+  e = sys.exc_info()
+  print("FATAL! Could not parse JSON - %s" % e[1], file=sys.stderr)
+  sys.exit(1)
+
+if "response" not in reply:
+  print("FATAL! No 'response' in reply.", file=sys.stderr)
+  sys.exit(1)
+
+# Parse our columns of interest and the list of associated wifi clients
+
+line = reply["response"].split("\n")
+if (len(line) < 2):
+  sys.exit(0)   # nothing to do, no wifi clients associated
+
+column_names = re.split(' +', line[0])
+all_clients = {}
+
+for l_idx in range(1, len(line)):                       # go thru all lines
+  entry = re.split(' +', line[l_idx])
+  if (len(entry) > cfg_columns_to_parse):
+    macaddr = entry[cfg_addr_column]
+    client_metrics = {}
+    for c_idx in range(0, cfg_columns_to_parse):        # go thru all columns
+      if (c_idx != cfg_addr_column):
+        k = column_names[c_idx].title().replace("-", "_")
+        v = re.sub('[a-zA-Z]', '', entry[c_idx])        # strip non-digits
+        client_metrics[k] = v
+    all_clients[macaddr] = client_metrics
+
+# Now that we know all our clients, get details on each one, but we need to
+# repackage a macaddress into H.H.H format, and we also need to know which
+# radio (ie, 2.4GHz or 5GHz) the client is associated with.
+
+for macaddr in all_clients.keys():
+  t = macaddr.split(":")
+  dotaddr = "%s%s.%s%s.%s%s" % (t[0], t[1], t[2], t[3], t[4], t[5])
+  radio = "%s/0" % all_clients[macaddr]["Radio_Id"]
+  req = { "command" : "show dot11 associations %s %s" % (dotaddr, radio) }
+  print(json.dumps(req))
+  sys.stdout.flush()
+
+  try:
+    reply = json.loads(sys.stdin.readline())
+  except:
+    e = sys.exc_info()
+    print("FATAL! Could not parse JSON - %s" % e[1], file=sys.stderr)
+    sys.exit(1)
+
+  if "response" not in reply:
+    print("WARNING: No 'response' for %s." % dotaddr, file=sys.stderr)
+  else:
+    line = reply["response"].split("\n")
+    if (len(line) > 1):
+
+      # go thru client's detailed metrics. Recall that each line looks like
+      #   RX Bytes................ 18167151
+      # so we'll need to do some trimming and substitute space for underscore
+
+      for i in range(1, len(line)):
+        k, v = re.split("\.+ ", line[i])
+        k = k.lstrip(" ").title().replace(" ", "_").replace("-", "_")
+        all_clients[macaddr][k] = v
+
+# Deliver all metrics we've collected so far. It's important that we return
+# metrics as either int or float, so examine each entry.
+
+all_metrics = {}
+for macaddr in all_clients.keys():
+  for metric in all_clients[macaddr].keys():
+    k = "%s_%s{macaddr=\"%s\"}" % (cfg_metric_prefix, metric, macaddr)
+    v = all_clients[macaddr][metric]
+    if "." in v:
+      all_metrics[k] = float(v)
+    else:
+      all_metrics[k] = int(v)
+
+report = {}
+report["metrics"] = all_metrics
+print("%s" % json.dumps(report))
+

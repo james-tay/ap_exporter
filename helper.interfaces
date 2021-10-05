@@ -1,0 +1,99 @@
+#!/usr/bin/python3
+#
+# This helper script reports (physical) interface metrics. Our job is to run
+# the command:
+#
+#  % show interface counters up
+#
+# Each interface has the following raw report:
+#
+#  Interface : GigabitEthernet 0/1
+#   10 seconds input rate  :19766 bits/sec, 20 packets/sec
+#   10 seconds output rate :22259 bits/sec, 19 packets/sec
+#  Rxload               : 0%
+#  InOctets             : 20289695061
+#  InPkts               : 21931258 (Unicast: 95%, Multicast: 5%, Broadcast: 0%)
+#  ...
+#  ...
+#  dropped packet events (due to lack of resources): 0
+#  packets received of length (in octets):
+#    64 : 58295
+#    65-127 : 4503457
+#    128-255 : 3810168
+#    256-511 : 433327
+#    512-1023 : 724477
+#    1024-1518 : 12401534
+#  Interface : GigabitEthernet 0/1
+#  Packet increment in last sampling interval(5 seconds):
+#  InOctets             : 12858
+#  InPkts               : 112 (Unicast: 84%, Multicast: 16%, Broadcast: 0%)
+#  ...
+#  ...
+
+import re
+import sys
+import json
+
+cfg_prefix = "node_network"
+
+# -----------------------------------------------------------------------------
+
+req = { "command" : "show interface counters up" }
+print(json.dumps(req))
+sys.stdout.flush()
+try:
+  reply = json.loads(sys.stdin.readline())
+except:
+  e = sys.exc_info()
+  print("FATAL! Could not parse JSON - %s" % e[1], file=sys.stderr)
+  sys.exit(1)
+
+cur_interface = None
+if "response" in reply:
+  metrics = {}
+  line = reply["response"].split("\n")
+
+  # examine line by line. An interface block always begins with a line
+  # starting with "Interface", so that's how we determine context. However,
+  # the 2nd time the same interface is mentioned, the metrics which follow
+  # are packet increments, which we aren't interested in. Thus, set the
+  # "cur_interface" variable to None to indicate we're not interested in
+  # capturing metrics.
+
+  for idx in range(0, len(line)):
+
+    if (line[idx].startswith("Interface :")):
+      t = line[idx].split(" : ")
+      if (cur_interface != t[1]):        # found a new interface
+        cur_interface = t[1]
+      elif (cur_interface == t[1]):      # ignore subsequent metrics 
+        cur_interface = None
+
+    else:
+      if (cur_interface is not None):
+
+        # try to identify this metric. In general, the key/value on each line
+        # is separated with a colon. Split the line, trim off white space
+        # and check if the value is numeric.
+
+        k, v = line[idx].split(":", 1)
+        k = k.lstrip(" ").rstrip(" ").replace(" ", "_")
+        v = v.lstrip(" ").rstrip(" ")
+        if (re.match("^[a-zA-Z_]+$", k) is not None) and \
+           (re.match("^[0-9.-]+$", v) is not None) :
+
+          tag = "%s_%s{device=\"%s\"}" % (cfg_prefix, k, cur_interface)
+          if "." in v:
+            metrics[tag] = float(v)
+          else:
+            metrics[tag] = int(v)
+
+  if (len(metrics) > 0):
+    report = {}
+    report["metrics"] = metrics
+    print("%s" % json.dumps(report))
+
+else:
+  print("FATAL! No 'response' in reply.", file=sys.stderr)
+  sys.exit(1)
+
