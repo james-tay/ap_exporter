@@ -1,0 +1,59 @@
+#!/usr/bin/python3
+#
+# This helper script reports disk usage metrics. Consider the following
+# example,
+#
+#   fs-ap1#show file systems
+#     Size(KB)    Free(KB)      Type  Flags  Prefixes
+#            -           -   network     rw  tftp:
+#            -           -   network     rw  oobtftp:
+#            -           -   network     rw  ftp:
+#            -           -   network     rw  oobftp:
+#         7864        7380      disk     rw  flash:
+#       125804      117993      disk     rw  tmp:
+#
+# In the above example, extract the "disk" entries and report on size and
+# free space.
+
+import re
+import sys
+import json
+
+# -----------------------------------------------------------------------------
+
+req = { "command" : "show file systems" }
+print(json.dumps(req))
+sys.stdout.flush()
+try:
+  reply = json.loads(sys.stdin.readline())
+except:
+  e = sys.exc_info()
+  print("FATAL! Could not parse JSON - %s" % e[1], file=sys.stderr)
+  sys.exit(1)
+
+if "response" not in reply:
+  print("FATAL! No 'response' in reply.", file=sys.stderr)
+  sys.exit(1)
+
+# examine "response" line by line, look for "disk" entries, put our findings
+# into "metrics"
+
+metrics = {}
+line = reply["response"].split("\n")
+for idx in range(0, len(line)):
+  t = re.split("[ ]+", line[idx].lstrip(" "))
+  disk_size = t[0]
+  disk_free = t[1]
+  disk_type = t[2]
+  disk_name = t[4].rstrip(":")
+  if (disk_type == "disk"):
+    entry = "node_filesystem_free_bytes{device=\"%s\"}" % disk_name
+    metrics[entry] = int(disk_free) * 1024
+    entry = "node_filesystem_size_bytes{device=\"%s\"}" % disk_name
+    metrics[entry] = int(disk_size) * 1024
+
+if (len(metrics) > 0):
+  report = {}
+  report["metrics"] = metrics
+  print("%s" % json.dumps(report))
+

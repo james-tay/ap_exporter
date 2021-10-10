@@ -206,6 +206,11 @@ if (len(sys.argv) < 3):
   print("Usage: %s <webserver port> <helper1> [<helperN> ...]" % sys.argv[0])
   sys.exit(1)
 
+# set debug level if DEBUG is specified
+
+if os.getenv("DEBUG") is not None:
+  rt_debug = int(os.getenv("DEBUG"))
+
 port = int(sys.argv[1])
 t_ws = threading.Thread(target=f_httpdThread, args=(port,))
 t_ws.daemon = True

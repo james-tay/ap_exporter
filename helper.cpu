@@ -1,0 +1,65 @@
+#!/usr/bin/python3
+#
+# This helper script reports cpu and process metrics. Consider the following
+# example,
+#
+#   fs-ap1#show processes cpu 
+#   System Uptime: 8days 42:09.3
+#   CPU utilization for five seconds: 1.1%; one minute: 0.5%; five minutes: 0.7%
+#   set system cpu watermark (open): high up 85%, down 75%
+#
+#   Tasks Statistics: 174 total, 0 running, 174 sleeping, 0 stopped, 0 zombie
+#     Pid Vsd S   PRI  P       5Sec       1Min       5Min      15Min Process
+#       1   0 S    20  1   0.0(0.0)   0.0(0.0)   0.0(0.0)   0.0(0.0) init
+#       2   0 S    20  0   0.0(0.0)   0.0(0.0)   0.0(0.0)   0.0(0.0) kthreadd
+#       ...
+
+import sys
+import json
+
+import pprint
+
+# -----------------------------------------------------------------------------
+
+req = { "command" : "show process cpu" }
+print(json.dumps(req))
+sys.stdout.flush()
+try:
+  reply = json.loads(sys.stdin.readline())
+except:
+  e = sys.exc_info()
+  print("FATAL! Could not parse JSON - %s" % e[1], file=sys.stderr)
+  sys.exit(1)
+
+if "response" not in reply:
+  print("FATAL! No 'response' in reply.", file=sys.stderr)
+  sys.exit(1)
+
+# examine the first 5 lines to obtain current cpu utilization and the count
+# of tasks in the various states. Save these into the "metrics" hash.
+
+metrics = {}
+line = reply["response"].split("\n")
+for idx in range(0, len(line)):
+
+  if line[idx].startswith("CPU utilization"):
+    t = line[idx].split(":")
+    s = t[1]                    # this would be "1.1%; one minute"
+    t = s.split("%")
+    metrics["node_cpu_utilization"] = float(t[0])
+
+  if line[idx].startswith("Tasks Statistics"):
+    offset = line[idx].find(":")
+    if (offset > 0):
+      s = line[idx][offset+1:]  # this would be "174 total, 0 running, ..."
+      t = s.split(",")
+      for i in range(0, len(t)):
+        task_count, task_state = t[i].lstrip(" ").split(" ")
+        entry = "node_procs_%s" % task_state
+        metrics[entry] = int(task_count)
+
+if (len(metrics) > 0):
+  report = {}
+  report["metrics"] = metrics
+  print("%s" % json.dumps(report))
+
