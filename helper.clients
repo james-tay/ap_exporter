@@ -33,10 +33,31 @@
 # clients encountered are stored in a hash "all_clients" where the key is
 # the mac address of the client. Recall that prometheus metric names cannot
 # have dashes, so we have to replace any '-' characters with '_'.
+#
+# For easier viewing, it would be best if metrics contain tags which identify
+# the DNS name of the wifi clients (instead of just mac addresses). If the
+# wifi AP is operating in layer 2 only, we need to use DHCP snooping in order
+# to map mac address to IP. Eg,
+#
+#   ip dhcp snooping
+#   interface GigabitEthernet 0/1.6
+#     ip dhcp snooping trust
+#
+# After the wifi AP has had the chance to observe some DHCP interactions, we
+# are able to view :
+#
+#   fs-ap1#show ip dhcp snooping binding
+#   Total number of bindings: 4
+#   NO. MACADDRESS      IPADDRESS      LEASE(SEC) TYPE          VLAN  INTERFACE
+#   --- --------------- -------------- ---------- ------------- ----- ---------
+#   1   1831.bf81.eafe  192.168.7.140  2971       DHCP-Snooping 7     Wlan 3
+#   2   4461.32c2.830d  192.168.7.15   2365       DHCP-Snooping 7     Wlan 3
+#   3   d850.e674.183e  192.168.6.9    3160       DHCP-Snooping 6     Wlan 4
 
 import re
 import sys
 import json
+import socket
 
 # Columns of interest in output of "show dot11 associations all-client".
 cfg_columns_to_parse = 7
@@ -65,7 +86,8 @@ if "response" not in reply:
   print("FATAL! No 'response' in reply.", file=sys.stderr)
   sys.exit(1)
 
-# Parse our columns of interest and the list of associated wifi clients
+# Parse columns of interest and identify the list of associated wifi clients
+# as well as some info on each of them (eg, Up/Down rate, Channel, etc).
 
 line = reply["response"].split("\n")
 if (len(line) < 2):
@@ -120,17 +142,67 @@ for macaddr in all_clients.keys():
         k = k.lstrip(" ").title().replace(" ", "_").replace("-", "_")
         all_clients[macaddr][k] = v
 
-# Deliver all metrics we've collected so far. It's important that we return
-# metrics as either int or float, so examine each entry.
+# For each wifi client, we know its mac address, but it would be nice to
+# also identify its IP, and if possible its DNS name.
+
+req = { "command" : "show ip dhcp snooping binding" }
+print(json.dumps(req))
+sys.stdout.flush()
+
+try:
+  reply = json.loads(sys.stdin.readline())
+except:
+  e = sys.exc_info()
+  print("FATAL! Could not parse JSON - %s" % e[1], file=sys.stderr)
+  sys.exit(1)
+
+if "response" not in reply:
+  print("WARNING: No 'response' in reply.", file=sys.stderr)
+else:
+  line = reply["response"].split("\n")
+
+  # go through each "line", only pay attention to lines that begin with a
+  # number and obtain the IP for each mac address. Note that we're supplied
+  # a mac address in HHHH.HHHH.HHHH format, which we convert to H:H:H:H:H:H.
+
+  for idx in range(0, len(line)):
+    t = re.split(' +', line[idx])
+    if re.match("^[0-9]+$", t[0]):      # line starting with just a number
+      macaddr = "%s:%s:%s:%s:%s:%s" % \
+                (t[1][0:2], t[1][2:4],
+                 t[1][5:7], t[1][7:9],
+                 t[1][10:12], t[1][12:14])
+      if macaddr in all_clients:
+        ipaddr = t[2]
+        all_clients[macaddr]["ipaddr"] = ipaddr
+        fqdn = socket.getnameinfo((ipaddr, 0), 0)[0] # name is first tuple
+        if (fqdn != ipaddr):            # we get an fqdn if a PTR was found
+          all_clients[macaddr]["fqdn"] = fqdn
+
+# Package all metrics we've collected so far for delivery. It's important that
+# we return metrics as either int or float, so examine each entry. This is
+# also our opportunity to attach labels to each metric.
 
 all_metrics = {}
 for macaddr in all_clients.keys():
   for metric in all_clients[macaddr].keys():
-    k = "%s_%s{macaddr=\"%s\"}" % (cfg_metric_prefix, metric, macaddr)
+    labels = "macaddr=\"%s\",wlan_id=\"%s\",chan=\"%s\"" % \
+              (macaddr,
+               all_clients[macaddr]["Wlan_Id"],
+               all_clients[macaddr]["Chan"])
+
+    # if the "ipaddr" is available, add it to "labels"
+
+    if "ipaddr" in all_clients[macaddr]:
+      labels += ",ipaddr=\"%s\"" % all_clients[macaddr]["ipaddr"]
+    if "fqdn" in all_clients[macaddr]:
+      labels += ",fqdn=\"%s\"" % all_clients[macaddr]["fqdn"]
+
+    k = "%s_%s{%s}" % (cfg_metric_prefix, metric, labels)
     v = all_clients[macaddr][metric]
-    if "." in v:
+    if re.match("-?[0-9]+\.[0-9]+$", v):        # regex for a float
       all_metrics[k] = float(v)
-    else:
+    elif re.match("^[0-9]+$", v):               # regex for an int
       all_metrics[k] = int(v)
 
 report = {}
