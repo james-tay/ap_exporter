@@ -21,3 +21,36 @@ to obtain metrics from `fs-ap1`.
         target_label: instance
         replacement: 'fs-ap1'
 ```
+
+Prometheus queries can be performed using curl. For example, the following
+query lists the RSSIs of all currently connected clients :
+
+```
+  curl http://prometheus:9090/api/v1/query?query=wifi_client_Rssi
+  {
+    "status": "success",
+    "data": {
+      "resultType": "vector",
+      "result": [
+        {
+          "metric": {
+            "__name__": "wifi_client_Rssi",
+            "chan": "149",
+            "fqdn": "ecobee.drowningfrog.homenet.org",
+            "instance": "fs-ap1",
+            "ipaddr": "192.168.7.15",
+            "job": "wifi",
+            "macaddr": "44:61:32:c2:83:0d",
+            "wlan_id": "3"
+          },
+          "value": [
+            1634169609.477,
+            "47"
+          ]
+        },
+        ...
+      ]
+    }
+  }
+```
+

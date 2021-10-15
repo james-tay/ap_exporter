@@ -204,6 +204,7 @@ def f_signal_handler(sig, frame):
 
 if (len(sys.argv) < 3):
   print("Usage: %s <webserver port> <helper1> [<helperN> ...]" % sys.argv[0])
+  print("Note - specify full/relative path to helper scripts.")
   sys.exit(1)
 
 # set debug level if DEBUG is specified
@@ -247,17 +248,17 @@ while (rt_running):
   # run through each helper
 
   for i in range(0, len(helper)):
+    p = None
     try:
       p = subprocess.Popen ([ helper[i] ], shell=False,
                             stdin=subprocess.PIPE, stdout=subprocess.PIPE)
     except:
       e = sys.exc_info()
-      print("FATAL! Cannot run %s - %s" % (helper[i], e[1]))
-      sys.exit(1)
+      print("WARNING: Cannot run %s - %s" % (helper[i], e[1]))
 
     # keep reading commands (or metrics) from helper until it disconnects.
 
-    while(1):
+    while(p is not None):
       buf = str(p.stdout.readline(), "utf-8")
       if (len(buf) < 1):
         break
@@ -313,11 +314,12 @@ while (rt_running):
               helper[i])
         break
 
-    p.stdin.close()
-    p.stdout.close()
-    p.wait()
-    if (rt_debug):
-      print("DEBUG: helper '%s' exited %d." % (helper[i], p.returncode))
+    if (p is not None):
+      p.stdin.close()
+      p.stdout.close()
+      p.wait()
+      if (rt_debug):
+        print("DEBUG: helper '%s' exited %d." % (helper[i], p.returncode))
 
   # figure out how long we get to sleep
 
