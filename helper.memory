@@ -61,7 +61,7 @@ if "response" in reply:
           metrics[name] = int(k[0].rstrip("KB")) * 1024
 
   else:
-    print("FATAL! Expecting 3x lines, got %d." % len(lines))
+    print("FATAL! Expecting 3x lines, got %d." % len(line))
     sys.exit(1)
 
   # if we managed to collect metrics, report them now.

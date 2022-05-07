@@ -42,15 +42,16 @@ metrics = {}
 line = reply["response"].split("\n")
 for idx in range(0, len(line)):
   t = re.split("[ ]+", line[idx].lstrip(" "))
-  disk_size = t[0]
-  disk_free = t[1]
-  disk_type = t[2]
-  disk_name = t[4].rstrip(":")
-  if (disk_type == "disk"):
-    entry = "node_filesystem_free_bytes{device=\"%s\"}" % disk_name
-    metrics[entry] = int(disk_free) * 1024
-    entry = "node_filesystem_size_bytes{device=\"%s\"}" % disk_name
-    metrics[entry] = int(disk_size) * 1024
+  if (len(t) >= 5):
+    disk_size = t[0]
+    disk_free = t[1]
+    disk_type = t[2]
+    disk_name = t[4].rstrip(":")
+    if (disk_type == "disk"):
+      entry = "node_filesystem_free_bytes{device=\"%s\"}" % disk_name
+      metrics[entry] = int(disk_free) * 1024
+      entry = "node_filesystem_size_bytes{device=\"%s\"}" % disk_name
+      metrics[entry] = int(disk_size) * 1024
 
 if (len(metrics) > 0):
   report = {}
