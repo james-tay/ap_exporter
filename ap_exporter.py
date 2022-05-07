@@ -47,6 +47,14 @@
 # stdin and stdout (ie, exits). Metrics supplied to us by the helper(s) are
 # stored locally and are exposed via a web server which runs in a dedicated
 # thread.
+#
+# Example commandline,
+#
+#   $ export AP_HOST="my-ap1.example.com"
+#   $ export AP_PROMPT="my-ap1#"
+#   $ export AP_USER="joe"
+#   $ export AP_SSHKEY="joe.key"
+#   $ /path/to/ap_exporter.py 9100 /path/to/helper1 /path/to/helper2
 
 import os
 import sys
@@ -58,10 +66,10 @@ import threading
 import subprocess
 import http.server
 
-cfg_user = "ap_exporter"
-cfg_host = "fs-ap1"
-cfg_sshkey = "ap_exporter.key"
-cfg_prompt = "fs-ap1#"
+cfg_user = ""           # the username we use to ssh into the AP
+cfg_host = ""           # the DNS name of the AP
+cfg_sshkey = ""         # the ssh private key file
+cfg_prompt = ""         # the prompt we expect to see when logged into the AP
 cfg_poll_secs = 60      # how often we call helpers to update metrics
 cfg_stale_secs = 90     # metrics older than this will not be exposed
 
@@ -80,6 +88,16 @@ class c_handler(http.server.BaseHTTPRequestHandler):
 
   def do_GET(self):
     print("NOTICE: do_GET() %s" % self.path)
+
+    # if we're called as a health check ...
+
+    if (self.path == "/healthz"):
+      self.send_response(200)
+      self.end_headers()
+      return
+
+    # reject any other URL
+
     if (self.path != "/metrics"):
       self.send_response(404)
       self.end_headers()
@@ -212,6 +230,34 @@ if (len(sys.argv) < 3):
 if os.getenv("DEBUG") is not None:
   rt_debug = int(os.getenv("DEBUG"))
 
+# read our config from environment variables
+
+if os.getenv("AP_HOST") is None:
+  print("FATAL! AP_HOST is not set.")
+  sys.exit(1)
+else:
+  cfg_host = os.getenv("AP_HOST")
+
+if os.getenv("AP_PROMPT") is None:
+  print("FATAL! AP_PROMPT is not set.")
+  sys.exit(1)
+else:
+  cfg_prompt = os.getenv("AP_PROMPT")
+
+if os.getenv("AP_USER") is None:
+  print("FATAL! AP_USERis not set.")
+  sys.exit(1)
+else:
+  cfg_user = os.getenv("AP_USER")
+
+if os.getenv("AP_SSHKEY") is None:
+  print("FATAL! AP_SSHKEY not set.")
+  sys.exit(1)
+else:
+  cfg_sshkey = os.getenv("AP_SSHKEY")
+
+# fire off webserver in a background thread
+
 port = int(sys.argv[1])
 t_ws = threading.Thread(target=f_httpdThread, args=(port,))
 t_ws.daemon = True
@@ -329,6 +375,7 @@ while (rt_running):
     print("NOTICE: sleeping for %d secs." % nap_duration)
     while (time.time() < last_run) and (rt_running):
       time.sleep(1)
+  sys.stdout.flush()
 
 if (rt_connected):
   os.close(stdin_fd)
